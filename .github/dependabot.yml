@@ -1,0 +1,28 @@
+# =============================================================================
+# dependabot.yml — dependency update proposals for the one runtime dependency
+# and the pinned CI actions.
+#
+# SECURITY: the cooldown is stated here rather than inherited. GitHub's own
+# default is three days, but a default is a decision somebody else can change;
+# this file owns seven. Speed-based publishing is how a compromised release
+# outruns detection, so a new version ages before it is proposed here. Security
+# updates are exempt from cooldown by GitHub and still arrive at once, which is
+# the trade this setting is chosen against.
+# =============================================================================
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+    cooldown:
+      default-days: 7
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+    cooldown:
+      default-days: 7

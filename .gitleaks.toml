@@ -1,0 +1,30 @@
+# =============================================================================
+# .gitleaks.toml — secret-scan configuration for CI.
+#
+# Extends the default ruleset with one narrowly scoped allowlist.
+#
+# The primary defence is not this file: the suite's credential fixture is
+# written to be self-evidently fake and low-entropy
+# ("EXAMPLEmapsKEYnotARealCredential"), so gitleaks' generic-api-key rule does
+# not fire on it and nothing needs suppressing. That is deliberate — a fixture
+# that looks like a real key trains a reviewer to wave through findings in
+# tests/.
+#
+# The allowlist below is the backstop for the exact string that fixture uses,
+# scoped to tests/ only, so a future rule with a different entropy threshold
+# cannot turn CI red on a value that authenticates against nothing. Every test
+# in this suite runs offline against a fake HTTP layer.
+# =============================================================================
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = """
+Test fixture, not a credential. It exists precisely so the suite can prove it
+never escapes into an error message or a log line. See tests/support.py and
+tests/test_runtime.py::TestScrubbing.
+"""
+paths = ['''^tests/.*\.py$''']
+regexes = [
+  '''EXAMPLEmapsKEYnotARealCredential''',
+]

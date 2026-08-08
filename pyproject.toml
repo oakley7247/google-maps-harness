@@ -1,0 +1,57 @@
+# =============================================================================
+# pyproject.toml — project metadata, the one dependency, and tool config.
+#
+# Part of: google-maps-harness. The mcp dependency is pinned exactly (not "^" or
+# "~") so an install can never pull a version nobody reviewed. Everything else
+# this server needs — HTTPS, TLS, JSON, URL encoding — is in the standard
+# library. There is no Google client library here on purpose: the six Maps
+# Platform APIs this server calls are plain JSON over HTTPS, and a client
+# library would add a dependency tree in exchange for code this project already
+# has to own (the transport carries the bounds and the credential handling).
+# =============================================================================
+[project]
+name = "google-maps-harness"
+version = "0.1.0"
+description = "MCP server exposing Google Maps Platform to an agent as bounded, read-only decisioning tools"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = [
+    # The official Model Context Protocol SDK. Implementing the protocol's
+    # stdio framing, JSON-RPC envelope, and capability negotiation by hand
+    # would be far more code than the server itself; nothing in the standard
+    # library speaks MCP.
+    "mcp==2.0.0",
+]
+
+[project.scripts]
+google-maps-harness = "google_maps_harness.server:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/google_maps_harness"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "UP", "B", "S", "RUF"]
+# S310 flags urllib.request.urlopen on a URL whose scheme could be attacker
+# chosen. Every URL this project opens is built in http_client.py from a
+# hardcoded https:// prefix plus a host taken from a module-level constant, so
+# the scheme is never taken from input; _check_url refuses anything else.
+ignore = ["S310"]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests assert on fixture values and carry a sample API key that exists
+# precisely to prove it never leaks. The lints for asserts and "hardcoded
+# password" do not apply there.
+"tests/*" = ["S101", "S105", "S106"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true

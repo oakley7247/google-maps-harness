@@ -1,0 +1,12 @@
+# =============================================================================
+# requirements.in — the direct dependencies, from which requirements.lock is
+# compiled.
+#
+# Part of: google-maps-harness. Edit this file, then regenerate the lockfile:
+#   uv pip compile --generate-hashes --no-header -o requirements.lock requirements.in
+# and restore requirements.lock's own header comment, which the compiler drops.
+#
+# One entry, pinned exactly. Everything else this server needs — HTTPS, TLS,
+# JSON, URL encoding — is in the standard library.
+# =============================================================================
+mcp==2.0.0
