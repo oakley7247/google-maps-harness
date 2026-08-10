@@ -445,12 +445,23 @@ class MapsClient:
         Raises:
             MapsApiError: Google refused the request.
         """
-        params = {"address": address, "languageCode": self._language}
+        params = {"languageCode": self._language}
         region = region_code or self._region
         if region:
             params["regionCode"] = region
+        # NOTE: the address goes in the path, not in a query parameter. Geocoding
+        # v4 reserves `?address=` for a *structured* address, which is a protobuf
+        # message; sending the free-text form there is refused with "'address' is
+        # a message type. Parameters can only be bound to primitive types."
+        # Verified against the live API on 2026-08-09 — the reference page shows
+        # both spellings and does not say which one takes free text (ledger
+        # LL-26: a comment naming a mechanism is a claim, and this one was wrong
+        # until a real request proved it).
         return self._call(
-            GEOCODE_HOST, "/v4/geocode/address", "geocoding an address", params=params
+            GEOCODE_HOST,
+            "/v4/geocode/address/" + urllib.parse.quote(address, safe=""),
+            "geocoding an address",
+            params=params,
         )
 
     def reverse_geocode(self, latitude: float, longitude: float) -> Any:

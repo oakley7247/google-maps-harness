@@ -135,6 +135,45 @@ class TestAtmosphereGate(unittest.TestCase):
                 self.assertTrue(set(DETAIL_TIERS[lower]) < set(DETAIL_TIERS[higher]))
 
 
+class TestGeocodingTools(unittest.TestCase):
+    """Where Geocoding v4 expects each kind of input."""
+
+    def setUp(self) -> None:
+        """Install a runtime backed by a recording transport."""
+        self.transport = install_runtime()
+
+    def test_a_free_text_address_goes_in_the_path(self) -> None:
+        """Geocoding v4 reserves `?address=` for a structured address, which is a
+        protobuf message, and refuses free text sent there with "'address' is a
+        message type". This test failed against the first implementation with
+        exactly that: the address was a query parameter and the path was bare
+        (ledger LL-21, LL-26 — the API's own answer settled what the reference
+        page left ambiguous)."""
+        geocoding.geocode_address("1600 Amphitheatre Parkway, Mountain View, CA")
+        self.assertEqual(
+            self.transport.last.path,
+            "/v4/geocode/address/1600%20Amphitheatre%20Parkway%2C%20Mountain%20View%2C%20CA",
+        )
+        self.assertNotIn("address", self.transport.last.params or {})
+
+    def test_the_address_is_encoded_so_it_cannot_add_a_path_segment(self) -> None:
+        """A slash in an address is data, not a route to another resource."""
+        geocoding.geocode_address("12/3 High St, Oxford")
+        self.assertNotIn("/", self.transport.last.path.removeprefix("/v4/geocode/address/"))
+
+    def test_a_coordinate_goes_in_the_query_as_two_primitives(self) -> None:
+        """Reverse geocoding binds the sub-fields of a message, which are
+        primitives, so this one is a query parameter and the test above is not."""
+        geocoding.reverse_geocode(40.7359, -73.9911)
+        self.assertEqual(self.transport.last.path, "/v4/geocode/location")
+        self.assertEqual(self.transport.last.params["location.latitude"], "40.7359000")
+
+    def test_a_place_id_goes_in_the_path_encoded(self) -> None:
+        """Same reasoning as the address, and the id is validated before it gets here."""
+        geocoding.geocode_place_id("ChIJj61dQgK6j4AR4GeTYWZsKWw")
+        self.assertEqual(self.transport.last.path, "/v4/geocode/places/ChIJj61dQgK6j4AR4GeTYWZsKWw")
+
+
 class TestPlacesTools(unittest.TestCase):
     """What the search tools put on the wire."""
 
