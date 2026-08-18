@@ -29,18 +29,28 @@ Watch for **Places API (New)** specifically — the console also lists a legacy 
 
 Set a daily quota cap on each API's Quotas page too. Google enforces that at its own edge, which is the only place a spend cap holds no matter what runs in the sandbox. The script's own 25-requests-per-run cap bounds one runaway command, not one runaway week.
 
-## 3. Give the script the key
+## 3. Check before debugging
+
+```bash
+python3 scripts/maps.py check --all
+```
+
+Reports the key (length and a hash fingerprint, never the value), whether Google is reachable, and which of the seven APIs answer. Everything below is for acting on what it tells you.
+
+## 4. Give the script the key
 
 In order of preference:
 
 1. **Upload a file.** A text file containing just the key, named `google-maps-key.txt`. The script finds it in the working directory and the usual upload locations, or you can point at it with `--key-file`. This keeps the key out of the conversation transcript.
 2. **Set `GOOGLE_MAPS_API_KEY`** in the environment, where the environment is yours to set.
 
+**On claude.ai the key does not survive between conversations.** There is no environment to set and no persistent home directory, so an uploaded file lasts as long as that chat. Attaching the key file to a Project is the way to avoid re-uploading — every conversation in that Project starts with the file available. Otherwise plan on uploading it once per conversation.
+
 A `.env` file in the `NAME=value` form works too — the script reads `GOOGLE_MAPS_API_KEY=...` out of it, so a file copied from a server setup needs no editing.
 
 The key is never accepted as a command-line argument. Command lines are visible to every process on the machine through `ps` and get written into shell history; an environment variable or a file is neither.
 
-## 4. Network access
+## 5. Network access
 
 Skills run in a sandbox whose network access varies by surface:
 

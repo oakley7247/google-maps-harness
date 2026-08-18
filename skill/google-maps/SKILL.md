@@ -21,16 +21,25 @@ If no key is found, the script says so and names what it looked for. Ask the use
 
 **2. Network access.** This is the one that surprises people. Skills get network access depending on the surface and the user's settings, so a key can be perfect and every call still fail with "Could not reach". If that happens, say plainly that the sandbox has no route to `googleapis.com` and that the fix is a settings change, not a retry. Don't loop.
 
-Confirm both in one cheap call before promising results:
+**Check both at once, before promising results.** One command separates the three failures that look identical from the outside — no key, no network, and an API switched off:
 
 ```bash
-python3 scripts/maps.py --key-file <path> geocode "1600 Amphitheatre Parkway, Mountain View, CA"
+python3 scripts/maps.py check
 ```
+
+It reports where it looked for the key, whether Google is reachable, and which APIs answer. Add `--all` to probe all seven rather than one. It spends one request, or seven with `--all`, and prints no part of the key.
+
+Run it first whenever a location request arrives in a fresh conversation. Diagnosing this after three failed answers wastes far more of the user's patience than one check costs.
+
+**On claude.ai the key does not persist between conversations.** There is no environment to set, so an uploaded file lives only as long as that chat. Two ways to avoid re-uploading every time: attach the key file to a Project, so every conversation in it starts with the file present; or accept the upload as a first step. Say which you're doing rather than silently failing on the second conversation.
+
+**If there is no key, say so and stop.** Do not substitute web search or browsing for these tools without telling the user plainly what changed: browsed listings have no verified travel times, no traffic, no structured hours, and no address validation. That is a real downgrade, and the user should be the one who decides to accept it.
 
 ## Choosing the command
 
 | The question | Command |
 | --- | --- |
+| Is any of this actually configured? | `check` |
 | Where is this address? | `geocode` |
 | What's at this coordinate? | `reverse` |
 | Where is this place id? | `place-id` |

@@ -29,6 +29,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import os
@@ -52,14 +53,24 @@ KEY_ENV_VAR = "GOOGLE_MAPS_API_KEY"
 # rather than by typing the key into a chat message, where it would be stored
 # in the conversation transcript forever.
 KEY_FILENAMES = ("google-maps-key.txt", "google_maps_key.txt", ".env", "env.txt")
-KEY_SEARCH_DIRS = (
+KEY_SEARCH_ROOTS = (
     ".",
     "/mnt/user-data/uploads",
     "/mnt/user-data",
     "/mnt/data",
+    "/mnt/outputs",
     "/tmp/outputs",
+    "/tmp/inputs",
+    "/tmp",
     str(Path.home()),
 )
+
+# Each root is checked directly and one level below it, because sandboxes vary
+# in where they drop an upload and a wrong guess reads to the user as "the
+# skill is broken". One level is the compromise: it finds
+# `/mnt/user-data/uploads/keys/google-maps-key.txt` without turning key
+# discovery into a filesystem walk.
+_MAX_SEARCH_DIRS = 200
 
 # Google keys are 39 characters beginning `AIza` today, from the URL-safe base64
 # alphabet. Matched on length and alphabet rather than the exact shape, so a
@@ -203,6 +214,35 @@ def _key_from_text(text: str) -> str | None:
     return None
 
 
+def key_candidates(explicit_path: str | None) -> list[Path]:
+    """List every file that could hold the key, in the order they are tried.
+
+    Args:
+        explicit_path: A file named with --key-file, or None to search.
+
+    Returns:
+        The candidate paths. Exposed rather than inlined so the `check` command
+        can tell the user exactly where it looked — a search that fails
+        silently is indistinguishable from a search that never ran.
+    """
+    if explicit_path:
+        return [Path(explicit_path).expanduser()]
+
+    directories: list[Path] = []
+    for root in KEY_SEARCH_ROOTS:
+        base = Path(root)
+        directories.append(base)
+        try:
+            children = sorted(child for child in base.iterdir() if child.is_dir())
+        except OSError:
+            continue
+        directories.extend(children)
+        if len(directories) >= _MAX_SEARCH_DIRS:
+            break
+
+    return [directory / name for directory in directories[:_MAX_SEARCH_DIRS] for name in KEY_FILENAMES]
+
+
 def load_key(explicit_path: str | None) -> str:
     """Find the API key, without ever taking it from the command line.
 
@@ -230,15 +270,7 @@ def load_key(explicit_path: str | None) -> str:
             "hyphen, and underscore. Value withheld from this message."
         )
 
-    candidates: list[Path] = []
-    if explicit_path:
-        candidates.append(Path(explicit_path).expanduser())
-    else:
-        for directory in KEY_SEARCH_DIRS:
-            for name in KEY_FILENAMES:
-                candidates.append(Path(directory) / name)
-
-    for path in candidates:
+    for path in key_candidates(explicit_path):
         try:
             if not path.is_file():
                 continue
@@ -1601,6 +1633,144 @@ def _add_region(parser: argparse.ArgumentParser) -> None:
     )
 
 
+# One probe per API, cheapest legitimate request in each case. Used by `check`
+# to turn "something is wrong" into "this specific API is switched off".
+_API_PROBES = (
+    ("Geocoding", GEOCODE_HOST, "/v4/geocode/address/Boston", "GET", None, None, None),
+    (
+        "Places (New)",
+        PLACES_HOST,
+        "/v1/places:searchText",
+        "POST",
+        {"textQuery": "coffee", "pageSize": 1},
+        None,
+        "places.id",
+    ),
+    (
+        "Routes",
+        ROUTES_HOST,
+        "/directions/v2:computeRoutes",
+        "POST",
+        {
+            "origin": {"location": {"latLng": {"latitude": 42.36, "longitude": -71.06}}},
+            "destination": {"location": {"latLng": {"latitude": 42.37, "longitude": -71.07}}},
+            "travelMode": "DRIVE",
+        },
+        None,
+        "routes.duration",
+    ),
+    ("Time Zone", LEGACY_HOST, "/maps/api/timezone/json", "GET", None,
+     {"location": "42.36,-71.06", "timestamp": "1760000000"}, None),
+    ("Elevation", LEGACY_HOST, "/maps/api/elevation/json", "GET", None,
+     {"locations": "42.36,-71.06"}, None),
+    (
+        "Address Validation",
+        ADDRESS_VALIDATION_HOST,
+        "/v1:validateAddress",
+        "POST",
+        {"address": {"regionCode": "US", "addressLines": ["1600 Amphitheatre Pkwy"]}},
+        None,
+        None,
+    ),
+    (
+        "Air Quality",
+        AIR_QUALITY_HOST,
+        "/v1/currentConditions:lookup",
+        "POST",
+        {"location": {"latitude": 42.36, "longitude": -71.06}},
+        None,
+        None,
+    ),
+)
+
+
+def cmd_check(args: argparse.Namespace, client: Client | None) -> None:
+    """Report what is configured and what is reachable, without printing the key.
+
+    Runs before anyone wastes a conversation debugging. It separates the three
+    things that fail differently and look the same from the outside: no key, no
+    network, and an API that is switched off.
+
+    Args:
+        args: The parsed command line.
+        client: Unused; `check` builds its own, because it has to run and report
+            even when no key exists.
+    """
+    print("Google Maps skill — configuration check\n")
+
+    # 1. The key.
+    key: str | None = None
+    try:
+        key = load_key(args.key_file)
+    except MapsError as error:
+        print("  KEY       not found")
+        # The roots, absolute, rather than every subdirectory underneath them:
+        # someone deciding where to put the file needs the shortlist, not the
+        # search's full itinerary.
+        print("\n  Searched these locations (and one level inside each) for a file named")
+        print(f"  {', '.join(KEY_FILENAMES)}:")
+        shown: list[str] = []
+        for root in KEY_SEARCH_ROOTS:
+            base = Path(root)
+            if base.is_dir():
+                resolved = str(base.resolve())
+                if resolved not in shown:
+                    shown.append(resolved)
+                    print(f"    {resolved}")
+        print(
+            "\n  Fix: upload a text file containing only the key, named "
+            "google-maps-key.txt,\n  or pass --key-file with its path. Do not paste "
+            "the key into the chat —\n  a pasted key stays in the transcript."
+        )
+        print(f"\n  ({error})" if args.verbose else "")
+        raise SystemExit(1)
+
+    # Enough to tell two keys apart in a support conversation, and derived
+    # rather than excerpted: this line lands in a chat transcript, so it should
+    # carry no fragment of the credential itself.
+    fingerprint = hashlib.sha256(key.encode("utf-8")).hexdigest()[:8]
+    print(f"  KEY       found ({len(key)} characters, fingerprint {fingerprint})")
+
+    probe = Client(key, args.timeout)
+    checks = _API_PROBES if args.all else _API_PROBES[:1]
+
+    # 2. Network, proven by the first request rather than asserted.
+    reachable = True
+    results: list[tuple[str, str]] = []
+    for name, host, path, method, body, params, mask in checks:
+        try:
+            probe.request(host, path, f"the {name} API", method, params, body, mask)
+            results.append((name, "enabled"))
+        except MapsError as error:
+            text = str(error)
+            if "Could not reach" in text or "did not answer" in text:
+                reachable = False
+                results.append((name, "unreachable"))
+                break
+            if "not enabled" in text or "not authorized" in text:
+                results.append((name, "NOT ENABLED"))
+            elif "quota" in text or "rate-limited" in text:
+                results.append((name, "over quota"))
+            else:
+                results.append((name, f"error — {text[:80]}"))
+
+    print("  NETWORK   " + ("reachable" if reachable else "NO ROUTE to googleapis.com"))
+    print()
+    for name, status in results:
+        print(f"  {'OK ' if status == 'enabled' else '!! '} {name:<20} {status}")
+
+    if not reachable:
+        print(
+            "\n  The key is fine and the project is fine — this sandbox has no route\n"
+            "  to Google. That is a settings change, not something a retry fixes.\n"
+            "  See references/setup.md."
+        )
+        raise SystemExit(1)
+    if not args.all:
+        print("\n  Only the Geocoding API was probed. Run `check --all` to test all seven.")
+    print(f"\n  {probe.requests_made} upstream request(s) spent on this check.")
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Build the argument parser.
 
@@ -1630,6 +1800,13 @@ def build_parser() -> argparse.ArgumentParser:
     detail_help = (
         "How much to return, and what it costs: essentials < pro < enterprise < atmosphere."
     )
+
+    check = sub.add_parser(
+        "check", help="Is the key found, is Google reachable, which APIs are on?"
+    )
+    check.add_argument("--all", action="store_true", help="Probe all seven APIs, not just one.")
+    check.add_argument("--verbose", action="store_true", help="Include the raw error text.")
+    check.set_defaults(run=cmd_check, needs_key=False)
 
     geocode = sub.add_parser("geocode", help="Address, landmark, or plus code to coordinates.")
     geocode.add_argument("address")
@@ -1733,9 +1910,13 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     key: str | None = None
     try:
-        key = load_key(args.key_file)
-        client = Client(key, args.timeout)
-        args.run(args, client)
+        # `check` loads the key itself, because its whole job is reporting on
+        # the case where there is not one.
+        if getattr(args, "needs_key", True):
+            key = load_key(args.key_file)
+            args.run(args, Client(key, args.timeout))
+        else:
+            args.run(args, None)
     except MapsError as error:
         print(scrub(str(error), key), file=sys.stderr)
         return 1
