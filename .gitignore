@@ -3,6 +3,8 @@
 .env.*
 !.env.example
 *.key
+google-maps-key.txt
+google_maps_key.txt
 
 # Python
 __pycache__/
