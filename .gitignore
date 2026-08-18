@@ -13,5 +13,8 @@ venv/
 .ruff_cache/
 .pytest_cache/
 
+# Build artifacts — rebuild with package_skill.py from skill/
+dist/
+
 # macOS
 .DS_Store

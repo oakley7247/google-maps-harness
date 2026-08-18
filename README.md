@@ -106,6 +106,21 @@ Google bills per request, and the Places API bills by the most expensive field y
 - **No local spend ledger.** Google's own per-API daily caps enforce a budget at its edge, which holds regardless of what runs on this machine. Duplicating that locally would add state, a lock, and a second number to keep true.
 - **No map images or static tiles.** They are bytes a model cannot read, and their URLs carry the key.
 
+## The same thing as a shareable Skill
+
+`skill/google-maps/` packages this server's know-how as an Agent Skill, for people who want the capability without running an MCP server. It carries the same validation, the same bounds, the same field-mask cost tiers, and the same untrusted-data discipline, in one dependency-free Python file that runs from bash.
+
+```bash
+python3 -m scripts.package_skill skill/google-maps
+```
+
+That produces `google-maps.skill` — a zip. Upload it at claude.ai under Settings → Capabilities → Skills, or drop the folder in `~/.claude/skills/` for Claude Code.
+
+Two constraints worth knowing before sharing it:
+
+- **It needs network access**, which varies by surface. Claude Code has it; claude.ai depends on the user's code-execution settings; the API's container has none, so the Skill cannot work there.
+- **Each recipient supplies their own key.** Nothing in the bundle holds a credential, and nothing should — a Skill is readable by everyone it reaches.
+
 ## Development
 
 ```bash
