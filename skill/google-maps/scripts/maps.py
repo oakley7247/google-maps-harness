@@ -39,7 +39,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -574,7 +574,7 @@ def rfc3339(value: str) -> str:
         ) from error
     if parsed.tzinfo is None:
         raise MapsError("departure_time must name its time zone, such as 2026-08-08T17:30:00Z.")
-    return parsed.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return parsed.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 # --- Places field-mask tiers --------------------------------------------------
@@ -683,6 +683,26 @@ def places_field_mask(tier: str, prefix: str = "") -> str:
 # --- Transport ----------------------------------------------------------------
 
 
+def _proxy_in_environment() -> str | None:
+    """Return the proxy the environment names, with any credentials removed.
+
+    Returns:
+        The proxy as scheme://host:port, or None when none is set. A proxy URL
+        may carry `user:password@`, which is a credential like any other, so
+        only the destination is ever returned.
+    """
+    for name in ("https_proxy", "HTTPS_PROXY", "http_proxy", "HTTP_PROXY", "ALL_PROXY"):
+        raw = os.environ.get(name, "").strip()
+        if not raw:
+            continue
+        parsed = urllib.parse.urlsplit(raw if "//" in raw else f"//{raw}")
+        host = parsed.hostname or "?"
+        port = f":{parsed.port}" if parsed.port else ""
+        scheme = f"{parsed.scheme}://" if parsed.scheme else ""
+        return f"{name}={scheme}{host}{port}"
+    return None
+
+
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
     """Refuse every redirect instead of following it."""
 
@@ -716,26 +736,49 @@ def _tls_context() -> ssl.SSLContext:
 class Client:
     """Calls Google Maps Platform under hard bounds, holding the only copy of the key."""
 
-    def __init__(self, api_key: str, timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS) -> None:
+    def __init__(
+        self,
+        api_key: str,
+        timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
+        use_proxy: bool = False,
+    ) -> None:
         """Build the client.
 
         Args:
             api_key: The Maps Platform key. Attached by this class and nothing
                 else, so no other code here handles it.
             timeout_seconds: Connect and read timeout per request.
+            use_proxy: Route through the proxy named in the environment. Needed
+                in a sandbox whose only egress is a managed proxy; off
+                everywhere else. See the note in the body.
         """
         self._key = api_key
         self._timeout = timeout_seconds
         self.requests_made = 0
-        # The empty ProxyHandler suppresses urllib's default, which seeds itself
-        # from http_proxy/HTTPS_PROXY/ALL_PROXY in the inherited environment.
-        # Without it, one environment variable routes every request — key
-        # included — through an arbitrary host, bypassing the allowlist below.
-        self._opener = urllib.request.build_opener(
-            urllib.request.ProxyHandler({}),
-            _NoRedirect,
-            urllib.request.HTTPSHandler(context=_tls_context()),
-        )
+        handlers: list[Any] = [_NoRedirect, urllib.request.HTTPSHandler(context=_tls_context())]
+        if not use_proxy:
+            # SECURITY: the empty ProxyHandler suppresses urllib's default, which
+            # seeds itself from http_proxy/HTTPS_PROXY/ALL_PROXY in the inherited
+            # environment. On an ordinary machine that default is a liability:
+            # one environment variable routes every request — key included —
+            # through a host of somebody else's choosing.
+            #
+            # A sandbox inverts that. Where the only route out is a managed
+            # proxy, suppressing it does not protect the key, it just guarantees
+            # no request ever leaves. So this is a decision the caller makes with
+            # --use-proxy rather than a constant, and it stays off by default,
+            # because the environment that needs it knows it does and the
+            # environment that does not should never be surprised into it.
+            #
+            # Two things still hold when it is on: the host allowlist is checked
+            # before any URL is built, so this code cannot be talked into a new
+            # destination; and a CONNECT tunnel keeps the proxy from reading the
+            # request. A proxy that terminates TLS with its own certificate
+            # authority would see the key — in a managed sandbox that is the same
+            # party already running this code, but it is worth knowing rather
+            # than assuming.
+            handlers.insert(0, urllib.request.ProxyHandler({}))
+        self._opener = urllib.request.build_opener(*handlers)
 
     def request(
         self,
@@ -811,7 +854,17 @@ class Client:
             # error.reason is an OSError or ssl.SSLError, never the request URL
             # or headers, so it is safe to surface — and it is what tells "no
             # network" apart from "certificate rejected", which the user needs.
-            raise MapsError(f"Could not reach {safe_label}: {error.reason}") from error
+            raise MapsError(
+                f"Could not reach {safe_label}: {error.reason}. "
+                + (
+                    "A sandbox egress proxy refusing CONNECT means the host is "
+                    "not on its domain allowlist — add the googleapis.com hosts "
+                    "in the code-execution settings. See references/setup.md."
+                    if _proxy_in_environment()
+                    else "If this is a sandbox, its egress proxy may need "
+                    "--use-proxy and an allowlist entry. See references/setup.md."
+                )
+            ) from error
         except TimeoutError as error:
             raise MapsError(
                 f"{safe_label} did not answer within {self._timeout:.0f} seconds."
@@ -1766,7 +1819,7 @@ def cmd_check(args: argparse.Namespace, client: Client | None) -> None:
     origin = "bundled with the skill" if bundled else "found in the environment or an upload"
     print(f"  KEY       {origin} ({len(key)} characters, fingerprint {fingerprint})")
 
-    probe = Client(key, args.timeout)
+    probe = Client(key, args.timeout, args.use_proxy)
     checks = _API_PROBES if args.all else _API_PROBES[:1]
 
     # 2. Network, proven by the first request rather than asserted.
@@ -1789,6 +1842,12 @@ def cmd_check(args: argparse.Namespace, client: Client | None) -> None:
             else:
                 results.append((name, f"error — {text[:80]}"))
 
+    proxy = _proxy_in_environment()
+    if proxy:
+        routing = "through the proxy" if args.use_proxy else "DIRECT — proxy ignored"
+        print(f"  PROXY     environment names one ({proxy}); requests go {routing}")
+    else:
+        print("  PROXY     none in the environment; requests go direct")
     print("  NETWORK   " + ("reachable" if reachable else "NO ROUTE to googleapis.com"))
     print()
     for name, status in results:
@@ -1796,9 +1855,13 @@ def cmd_check(args: argparse.Namespace, client: Client | None) -> None:
 
     if not reachable:
         print(
-            "\n  The key is fine and the project is fine — this sandbox has no route\n"
-            "  to Google. That is a settings change, not something a retry fixes.\n"
-            "  See references/setup.md."
+            "\n  The key is fine and the project is fine. Two things cause this,\n"
+            "  and the PROXY line above says which:\n"
+            "    - a proxy is named but requests go direct: re-run with --use-proxy\n"
+            "    - requests already go through it, or there is none: the "
+            "googleapis.com\n      hosts are not on the sandbox's domain "
+            "allowlist. Add them in the\n      code-execution settings.\n"
+            "  Neither is fixed by retrying. See references/setup.md."
         )
         raise SystemExit(1)
     if not args.all:
@@ -1834,6 +1897,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--timeout", type=float, default=DEFAULT_TIMEOUT_SECONDS, help="Seconds per request."
+    )
+    parser.add_argument(
+        "--use-proxy",
+        action="store_true",
+        default=os.environ.get("GOOGLE_MAPS_USE_PROXY", "").strip().lower()
+        in {"1", "true", "yes", "on"},
+        help=(
+            "Route through the proxy named in the environment. Needed in a "
+            "sandbox whose only way out is a managed egress proxy; leave off "
+            "on an ordinary machine, where a proxy variable is a redirect "
+            "somebody else set."
+        ),
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -1940,6 +2015,17 @@ def build_parser() -> argparse.ArgumentParser:
     air.add_argument("point", help="'lat,lng'")
     air.set_defaults(run=cmd_air_quality)
 
+    # argparse only accepts a top-level option before the subcommand name, and
+    # `check --use-proxy` is where anyone would actually type it. SUPPRESS is
+    # what makes defining it twice safe: without it every subparser would write
+    # False over a value set globally, so the convenience would silently discard
+    # the setting. Applied to every subcommand because the proxy decision is
+    # about the network, not about any one question.
+    for subcommand in sub.choices.values():
+        subcommand.add_argument(
+            "--use-proxy", action="store_true", default=argparse.SUPPRESS, help=argparse.SUPPRESS
+        )
+
     return parser
 
 
@@ -1960,7 +2046,7 @@ def main(argv: list[str] | None = None) -> int:
         # the case where there is not one.
         if getattr(args, "needs_key", True):
             key = load_key(args.key_file)
-            args.run(args, Client(key, args.timeout))
+            args.run(args, Client(key, args.timeout, args.use_proxy))
         else:
             args.run(args, None)
     except MapsError as error:

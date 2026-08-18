@@ -47,6 +47,12 @@ select = ["E", "F", "I", "N", "UP", "B", "S", "RUF"]
 ignore = ["S310"]
 
 [tool.ruff.lint.per-file-ignores]
+# The Skill is a standalone script that lands in sandboxes this project does not
+# choose, so it targets Python 3.9 while the server targets 3.11. UP017 rewrites
+# `timezone.utc` to `datetime.UTC`, which is 3.11-only — a correct modernization
+# for src/ and a portability regression here. The CI job named "Skill on the
+# oldest supported Python" is what proves this stays true.
+"skill/**" = ["UP017"]
 # Tests assert on fixture values and carry a sample API key that exists
 # precisely to prove it never leaks. The lints for asserts and "hardcoded
 # password" do not apply there.

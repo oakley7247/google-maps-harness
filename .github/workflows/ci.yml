@@ -120,3 +120,26 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # NOTE: a failed job is the signal; comments would need write access.
           GITLEAKS_ENABLE_COMMENTS: "false"
+
+  skill:
+    name: Skill on the oldest supported Python
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          # The Skill ships into sandboxes this project does not choose, so it
+          # targets an older Python than the server does. This job exists
+          # because a linter once rewrote `timezone.utc` to the 3.11-only
+          # `datetime.UTC` and nothing caught it — the suite runs on 3.11 and
+          # 3.14, where the broken form works fine.
+          python-version: "3.9"
+      # NOTE: no key and no network. --help proves the module imports and the
+      # parser builds; `check` proves the no-key path reports rather than
+      # crashes, and exits 1 by design, which is what the negation asserts.
+      - name: Skill imports and runs
+        run: |
+          python skill/google-maps/scripts/maps.py --help > /dev/null
+          ! python skill/google-maps/scripts/maps.py check
+      - name: Both packages build
+        run: python skill/build.py

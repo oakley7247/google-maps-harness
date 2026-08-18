@@ -19,7 +19,14 @@ Two things make this work, and both fail loudly rather than silently, so check t
 
 If no key is found, the script says so and names what it looked for. Ask the user to **upload a small text file containing just the key** rather than pasting the key into the chat — a pasted key lives in the conversation transcript for good, while an uploaded file does not. If they paste it anyway, write it to a file and use `--key-file`; don't repeat it back.
 
-**2. Network access.** This is the one that surprises people. Skills get network access depending on the surface and the user's settings, so a key can be perfect and every call still fail with "Could not reach". If that happens, say plainly that the sandbox has no route to `googleapis.com` and that the fix is a settings change, not a retry. Don't loop.
+**2. Network access.** This is the one that blocks people, and it is never the key. A sandbox reaches the internet through a managed proxy that allows only listed domains, and `googleapis.com` is not on the default list — so every call fails identically, and no retry changes that.
+
+`check` prints a PROXY line that says which of the two causes you have:
+
+- *a proxy is named but requests go direct* → re-run with `--use-proxy`
+- *requests already go through it, or there is none* → the domains are not allowlisted. The user has to add them under Settings → Capabilities → Code execution. The six hosts are in `references/setup.md`.
+
+Report which one it is and stop. Looping on this wastes the conversation.
 
 **Check both at once, before promising results.** One command separates the three failures that look identical from the outside — no key, no network, and an API switched off:
 
