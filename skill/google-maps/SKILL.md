@@ -115,10 +115,11 @@ Nothing here writes, so no failure can damage anything. The worst case is a wast
 python3 scripts/maps.py geocode "350 5th Ave, New York, NY"
 
 # 2. One matrix call ranks all three offices — not three route calls.
+#    The three destinations show the three endpoint forms; mix them freely.
 python3 scripts/maps.py matrix \
   --origin "40.7484405,-73.9856644" \
   --destination "place_id:ChIJ..." \
-  --destination "350 5th Ave, New York, NY" \
+  --destination "89 E 42nd St, New York, NY" \
   --destination "40.7061,-74.0088" \
   --mode DRIVE
 ```
