@@ -39,7 +39,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -53,17 +53,30 @@ KEY_ENV_VAR = "GOOGLE_MAPS_API_KEY"
 # rather than by typing the key into a chat message, where it would be stored
 # in the conversation transcript forever.
 KEY_FILENAMES = ("google-maps-key.txt", "google_maps_key.txt", ".env", "env.txt")
+# The Skill's own directory comes first. A key bundled with the Skill lives
+# beside SKILL.md, and the working directory when Claude runs this is whatever
+# the sandbox happened to start in — so locating the bundle relative to this
+# file is the only way a bundled key is found reliably.
+_SCRIPT_DIR = Path(__file__).resolve().parent
+_SKILL_DIR = _SCRIPT_DIR.parent
+
 KEY_SEARCH_ROOTS = (
+    str(_SKILL_DIR),
+    str(_SCRIPT_DIR),
     ".",
     "/mnt/user-data/uploads",
     "/mnt/user-data",
     "/mnt/data",
     "/mnt/outputs",
-    "/tmp/outputs",
-    "/tmp/inputs",
-    "/tmp",
     str(Path.home()),
 )
+
+# SECURITY: /tmp is deliberately absent from that list. It is world-writable, so
+# on a shared machine any local user could leave a `google-maps-key.txt` there
+# and this script would pick it up ahead of the real one — sending every request
+# with a key somebody else controls and can watch. The sandbox locations above
+# and the Skill's own directory cover the cases that matter; a key genuinely in
+# /tmp can still be named with --key-file.
 
 # Each root is checked directly and one level below it, because sandboxes vary
 # in where they drop an upload and a wrong guess reads to the user as "the
@@ -77,9 +90,7 @@ _MAX_SEARCH_DIRS = 200
 # format change does not lock the Skill out, while a value carrying a space, a
 # quote, or a newline is refused before it can reach a URL or a header.
 _KEY_MIN, _KEY_MAX = 20, 128
-_KEY_ALPHABET = frozenset(
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-"
-)
+_KEY_ALPHABET = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-")
 
 # --- Hosts, and how each one wants the key -----------------------------------
 #
@@ -240,7 +251,9 @@ def key_candidates(explicit_path: str | None) -> list[Path]:
         if len(directories) >= _MAX_SEARCH_DIRS:
             break
 
-    return [directory / name for directory in directories[:_MAX_SEARCH_DIRS] for name in KEY_FILENAMES]
+    return [
+        directory / name for directory in directories[:_MAX_SEARCH_DIRS] for name in KEY_FILENAMES
+    ]
 
 
 def load_key(explicit_path: str | None) -> str:
@@ -561,7 +574,7 @@ def rfc3339(value: str) -> str:
         ) from error
     if parsed.tzinfo is None:
         raise MapsError("departure_time must name its time zone, such as 2026-08-08T17:30:00Z.")
-    return parsed.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return parsed.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 # --- Places field-mask tiers --------------------------------------------------
@@ -651,9 +664,7 @@ ROUTE_STEPS_FIELD_MASK = ",".join(
         "routes.legs.steps.staticDuration",
     )
 )
-ROUTE_MATRIX_FIELD_MASK = (
-    "originIndex,destinationIndex,status,condition,duration,distanceMeters"
-)
+ROUTE_MATRIX_FIELD_MASK = "originIndex,destinationIndex,status,condition,duration,distanceMeters"
 
 
 def places_field_mask(tier: str, prefix: str = "") -> str:
@@ -1168,7 +1179,9 @@ def _circle(near: str | None, radius: float | None, field: str) -> dict[str, Any
     if near is None:
         raise MapsError(f"--radius needs {field} as well: give both, or neither.")
     latitude, longitude = parse_point(near, field)
-    metres = _finite_in_range(radius if radius is not None else 1000.0, "--radius", 0.0, MAX_RADIUS_METRES)
+    metres = _finite_in_range(
+        radius if radius is not None else 1000.0, "--radius", 0.0, MAX_RADIUS_METRES
+    )
     if metres <= 0.0:
         raise MapsError("--radius must be greater than 0.")
     return {"center": {"latitude": latitude, "longitude": longitude}, "radius": metres}
@@ -1537,7 +1550,9 @@ def cmd_timezone(args: argparse.Namespace, client: Client) -> None:
     else:
         stamp = int(datetime.fromisoformat(rfc3339(args.at)[:-1] + "+00:00").timestamp())
     if not _MIN_TIMESTAMP <= stamp <= _MAX_TIMESTAMP:
-        raise MapsError(f"--at must fall between {_MIN_TIMESTAMP} and {_MAX_TIMESTAMP} epoch seconds.")
+        raise MapsError(
+            f"--at must fall between {_MIN_TIMESTAMP} and {_MAX_TIMESTAMP} epoch seconds."
+        )
     emit(
         client.request(
             LEGACY_HOST,
@@ -1567,8 +1582,7 @@ def cmd_elevation(args: argparse.Namespace, client: Client) -> None:
         raise MapsError("elevation needs at least one 'lat,lng' point.")
     if len(args.points) > MAX_ELEVATION_POINTS:
         raise MapsError(
-            f"elevation takes at most {MAX_ELEVATION_POINTS} points in one call. "
-            "Split the list."
+            f"elevation takes at most {MAX_ELEVATION_POINTS} points in one call. Split the list."
         )
     parsed = [parse_point(entry, f"point[{index}]") for index, entry in enumerate(args.points)]
     joined = "|".join(f"{lat:.7f},{lng:.7f}" for lat, lng in parsed)
@@ -1659,10 +1673,24 @@ _API_PROBES = (
         None,
         "routes.duration",
     ),
-    ("Time Zone", LEGACY_HOST, "/maps/api/timezone/json", "GET", None,
-     {"location": "42.36,-71.06", "timestamp": "1760000000"}, None),
-    ("Elevation", LEGACY_HOST, "/maps/api/elevation/json", "GET", None,
-     {"locations": "42.36,-71.06"}, None),
+    (
+        "Time Zone",
+        LEGACY_HOST,
+        "/maps/api/timezone/json",
+        "GET",
+        None,
+        {"location": "42.36,-71.06", "timestamp": "1760000000"},
+        None,
+    ),
+    (
+        "Elevation",
+        LEGACY_HOST,
+        "/maps/api/elevation/json",
+        "GET",
+        None,
+        {"locations": "42.36,-71.06"},
+        None,
+    ),
     (
         "Address Validation",
         ADDRESS_VALIDATION_HOST,
@@ -1722,14 +1750,21 @@ def cmd_check(args: argparse.Namespace, client: Client | None) -> None:
             "google-maps-key.txt,\n  or pass --key-file with its path. Do not paste "
             "the key into the chat —\n  a pasted key stays in the transcript."
         )
-        print(f"\n  ({error})" if args.verbose else "")
-        raise SystemExit(1)
+        if args.verbose:
+            print(f"\n  ({error})")
+        # The failure was already reported in full above; chaining the original
+        # would print it twice, once as prose and once as traceback context.
+        raise SystemExit(1) from None
 
     # Enough to tell two keys apart in a support conversation, and derived
     # rather than excerpted: this line lands in a chat transcript, so it should
     # carry no fragment of the credential itself.
     fingerprint = hashlib.sha256(key.encode("utf-8")).hexdigest()[:8]
-    print(f"  KEY       found ({len(key)} characters, fingerprint {fingerprint})")
+    bundled = any(
+        (_SKILL_DIR / name).is_file() or (_SCRIPT_DIR / name).is_file() for name in KEY_FILENAMES
+    )
+    origin = "bundled with the skill" if bundled else "found in the environment or an upload"
+    print(f"  KEY       {origin} ({len(key)} characters, fingerprint {fingerprint})")
 
     probe = Client(key, args.timeout)
     checks = _API_PROBES if args.all else _API_PROBES[:1]
@@ -1779,7 +1814,10 @@ def build_parser() -> argparse.ArgumentParser:
     """
     parser = argparse.ArgumentParser(
         prog="maps.py",
-        description="Read Google Maps Platform: geocoding, places, routes, time zone, elevation, air quality.",
+        description=(
+            "Read Google Maps Platform: geocoding, places, routes, "
+            "time zone, elevation, air quality."
+        ),
     )
     parser.add_argument(
         "--key-file",
@@ -1791,7 +1829,9 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument("--language", default="en", help="Language for names and instructions.")
-    parser.add_argument("--region", help="Two-letter CLDR region that breaks ties on ambiguous names.")
+    parser.add_argument(
+        "--region", help="Two-letter CLDR region that breaks ties on ambiguous names."
+    )
     parser.add_argument(
         "--timeout", type=float, default=DEFAULT_TIMEOUT_SECONDS, help="Seconds per request."
     )
@@ -1821,7 +1861,9 @@ def build_parser() -> argparse.ArgumentParser:
     place.add_argument("place_id")
     place.set_defaults(run=cmd_place_id)
 
-    validate = sub.add_parser("validate-address", help="Is this postal address real and deliverable?")
+    validate = sub.add_parser(
+        "validate-address", help="Is this postal address real and deliverable?"
+    )
     validate.add_argument("lines", nargs="+", help="Address lines, most specific first.")
     _add_region(validate)
     validate.set_defaults(run=cmd_validate_address)
@@ -1851,7 +1893,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     details = sub.add_parser("place-details", help="Hours, rating, phone, website for one place.")
     details.add_argument("place_id")
-    details.add_argument("--detail", default="enterprise", choices=DETAIL_TIER_NAMES, help=detail_help)
+    details.add_argument(
+        "--detail", default="enterprise", choices=DETAIL_TIER_NAMES, help=detail_help
+    )
     _add_region(details)
     details.set_defaults(run=cmd_place_details)
 
@@ -1873,7 +1917,9 @@ def build_parser() -> argparse.ArgumentParser:
     route.add_argument("--steps", action="store_true", help="Turn-by-turn text; much larger.")
     route.set_defaults(run=cmd_route)
 
-    matrix = sub.add_parser("matrix", help="Every origin against every destination — the comparison tool.")
+    matrix = sub.add_parser(
+        "matrix", help="Every origin against every destination — the comparison tool."
+    )
     matrix.add_argument("--origin", dest="origins", action="append", required=True)
     matrix.add_argument("--destination", dest="destinations", action="append", required=True)
     matrix.add_argument("--mode", default="DRIVE", choices=TRAVEL_MODES)
@@ -1920,7 +1966,7 @@ def main(argv: list[str] | None = None) -> int:
     except MapsError as error:
         print(scrub(str(error), key), file=sys.stderr)
         return 1
-    except Exception as error:  # noqa: BLE001
+    except Exception as error:
         # Anything unexpected still gets scrubbed before it is printed: the
         # whole point of the registry is covering the paths nobody anticipated,
         # such as a library's own exception text mentioning a URL.

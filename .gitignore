@@ -17,6 +17,8 @@ venv/
 
 # Build artifacts — rebuild with package_skill.py from skill/
 dist/
+# Never committable, wherever it is written — this one holds a live key.
+*-personal.zip
 
 # macOS
 .DS_Store

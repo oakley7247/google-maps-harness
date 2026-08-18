@@ -111,10 +111,15 @@ Google bills per request, and the Places API bills by the most expensive field y
 `skill/google-maps/` packages this server's know-how as an Agent Skill, for people who want the capability without running an MCP server. It carries the same validation, the same bounds, the same field-mask cost tiers, and the same untrusted-data discipline, in one dependency-free Python file that runs from bash.
 
 ```bash
-python3 -m scripts.package_skill skill/google-maps
+python3 skill/build.py                     # dist/google-maps.zip — no credential
+python3 skill/build.py --with-key .env     # also dist/google-maps-personal.zip
 ```
 
-That produces `google-maps.skill` — a zip. Upload it at claude.ai under Settings → Capabilities → Skills, or drop the folder in `~/.claude/skills/` for Claude Code.
+Upload the zip at claude.ai under Settings → Capabilities → Skills, or drop `skill/google-maps/` in `~/.claude/skills/` for Claude Code.
+
+**Two builds, because claude.ai has nowhere to keep a key.** There is no environment to set and no persistent home, so an uploaded key file lasts one conversation. The personal build bundles the key inside the Skill, which is uploaded once and stays — convenient, and a real exposure, since the credential then lives in the Skill artifact under Anthropic's standard retention. The two are separate filenames, the personal one is gitignored and stamped with a do-not-share banner in its own SKILL.md, and `tests/test_skill_build.py` asserts that no key reaches the shareable build even when one is sitting in the working tree.
+
+Run `python3 scripts/maps.py check --all` inside the Skill to see which build is installed, whether Google is reachable, and which APIs are enabled.
 
 Two constraints worth knowing before sharing it:
 

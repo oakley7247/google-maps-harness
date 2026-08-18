@@ -44,7 +44,9 @@ In order of preference:
 1. **Upload a file.** A text file containing just the key, named `google-maps-key.txt`. The script finds it in the working directory and the usual upload locations, or you can point at it with `--key-file`. This keeps the key out of the conversation transcript.
 2. **Set `GOOGLE_MAPS_API_KEY`** in the environment, where the environment is yours to set.
 
-**On claude.ai the key does not survive between conversations.** There is no environment to set and no persistent home directory, so an uploaded file lasts as long as that chat. Attaching the key file to a Project is the way to avoid re-uploading — every conversation in that Project starts with the file available. Otherwise plan on uploading it once per conversation.
+**The maintainer's build may already carry the key.** `check` says `bundled with the skill` when it does, in which case there is nothing to upload and nothing below applies. That build is personal to one account and is not the one that gets shared.
+
+**Otherwise, on claude.ai the key does not survive between conversations.** There is no environment to set and no persistent home directory, so an uploaded file lasts as long as that chat. Attaching the key file to a Project is the way to avoid re-uploading — every conversation in that Project starts with the file available. Otherwise plan on uploading it once per conversation.
 
 A `.env` file in the `NAME=value` form works too — the script reads `GOOGLE_MAPS_API_KEY=...` out of it, so a file copied from a server setup needs no editing.
 
