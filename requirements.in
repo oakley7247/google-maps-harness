@@ -9,4 +9,4 @@
 # One entry, pinned exactly. Everything else this server needs — HTTPS, TLS,
 # JSON, URL encoding — is in the standard library.
 # =============================================================================
-mcp==2.0.0
+mcp==2.3.0
